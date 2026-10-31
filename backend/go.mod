@@ -5,6 +5,7 @@ go 1.22
 require (
 	github.com/gogf/gf/contrib/drivers/mysql/v2 v2.6.4
 	github.com/gogf/gf/v2 v2.6.4
+	github.com/shopspring/decimal v1.6.0
 )
 
 require (
