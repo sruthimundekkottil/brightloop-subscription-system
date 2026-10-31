@@ -1,0 +1,37 @@
+name: brightloop-subscription-system
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: bl
+    ports: ["3306:3306"]
+    volumes:
+      - ./backend/db:/db:ro
+      # shortcut: migrations run only when the MySQL data volume is first created; wire golang-migrate when a 000002 lands.
+      - ./backend/db/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-proot"]
+      interval: 3s
+      retries: 40
+  api:
+    image: golang:1.22
+    working_dir: /src
+    command: sh -c "go run . seed && go run ."
+    environment:
+      APP_ENV: development
+      GOTOOLCHAIN: local
+      DB_LINK: "mysql:root:root@tcp(mysql:3306)/bl?loc=UTC&parseTime=true"
+    ports: ["8000:8000"]
+    volumes:
+      - ./backend:/src
+      - gomod:/go/pkg/mod
+      - gobuild:/root/.cache/go-build
+    depends_on:
+      mysql:
+        condition: service_healthy
+volumes:  # same caches gotest.sh uses
+  gomod:
+    name: gomod
+  gobuild:
+    name: gobuild
