@@ -59,14 +59,15 @@ func SetTestClock(ctx context.Context, date time.Time) error {
 	return nil
 }
 
-// Audit writes one audit_log row inside the caller's transaction. changed_by stays NULL: callers are system jobs.
+// Audit writes one audit_log row inside the caller's transaction. changed_by is the Actor in the transaction's
+// context, or NULL for system jobs.
 func Audit(tx gdb.TX, table string, recordID uint64, action, reason string, changes any) error {
 	js, err := json.Marshal(changes)
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec("INSERT INTO audit_log (table_name, record_id, action, reason, changes) VALUES (?, ?, ?, NULLIF(?, ''), ?)",
-		table, recordID, action, reason, string(js))
+	_, err = tx.Exec("INSERT INTO audit_log (table_name, record_id, action, changed_by, reason, changes) VALUES (?, ?, ?, NULLIF(?, 0), NULLIF(?, ''), ?)",
+		table, recordID, action, ActorFrom(tx.GetCtx()).UserID, reason, string(js))
 	return err
 }
 

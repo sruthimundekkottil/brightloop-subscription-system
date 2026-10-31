@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/go-sql-driver/mysql"
 	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/shopspring/decimal"
@@ -116,8 +115,7 @@ func Run(ctx context.Context, asOf time.Time, dryRun bool) (*Result, error) {
 // billWithRetry retries once on deadlock (1213) or lock wait timeout (1205).
 func billWithRetry(ctx context.Context, subID uint64, asOf time.Time, dryRun bool, st settings, runID uint64) ([]Invoice, error) {
 	invs, err := billOne(ctx, subID, asOf, dryRun, st, runID)
-	var me *mysql.MySQLError
-	if errors.As(err, &me) && (me.Number == 1213 || me.Number == 1205) {
+	if platform.IsRetryable(err) {
 		invs, err = billOne(ctx, subID, asOf, dryRun, st, runID)
 	}
 	return invs, err
