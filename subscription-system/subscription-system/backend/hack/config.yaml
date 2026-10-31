@@ -1,0 +1,13 @@
+# gf CLI config. Run from the repo root (needs Docker; bl_gen is a throwaway schema-only database):
+#   docker compose exec -T mysql mysql -proot -e "DROP DATABASE IF EXISTS bl_gen; CREATE DATABASE bl_gen"
+#   docker compose exec -T mysql sh -c "mysql -proot bl_gen < /db/migrations/000001_init.up.sql"
+#   bash gotest.sh go run github.com/gogf/gf/cmd/gf/v2@v2.6.4 gen dao
+gfcli:
+  gen:
+    dao:
+      - link: "mysql:root:root@tcp(mysql:3306)/bl_gen"
+        # gf maps DECIMAL to float64 by default; money must never be float64.
+        typeMapping:
+          decimal:
+            type: decimal.Decimal
+            import: github.com/shopspring/decimal

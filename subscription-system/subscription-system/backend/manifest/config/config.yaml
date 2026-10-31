@@ -1,0 +1,16 @@
+# Local development only: matches docker-compose.yaml. Override in deployment.
+server:
+  address: ":8000"
+  openapiPath: "/api.json"
+  swaggerPath: "/swagger"
+database:
+  default:
+    link: "mysql:root:root@tcp(127.0.0.1:3306)/bl?loc=UTC&parseTime=true"
+jwt:
+  # Development value only; production sets JWT_SECRET.
+  secret: "dev-only-brightloop-secret-change-me-0123456789"
+app:
+  url: "http://localhost:5173"   # links in emails point here
+smtp:
+  addr: "127.0.0.1:1025"         # MailHog; UI at http://localhost:8025
+  from: "no-reply@brightloop.test"
