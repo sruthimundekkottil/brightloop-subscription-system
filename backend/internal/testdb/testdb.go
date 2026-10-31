@@ -12,15 +12,26 @@ import (
 	"github.com/gogf/gf/v2/database/gdb"
 )
 
-// Setup drops and recreates database `name`, applies every migration, and makes it the default group.
 // TEST_MYSQL_ADDR defaults to 127.0.0.1:3306 (root/root, as in docker-compose.yaml).
-func Setup(name string) error {
-	addr := os.Getenv("TEST_MYSQL_ADDR")
-	if addr == "" {
-		addr = "127.0.0.1:3306"
+func addr() string {
+	if a := os.Getenv("TEST_MYSQL_ADDR"); a != "" {
+		return a
 	}
+	return "127.0.0.1:3306"
+}
+
+// Connect makes existing database `name` the default group for g.DB().
+func Connect(name string) {
+	gdb.SetConfig(gdb.Config{"default": gdb.ConfigGroup{{
+		Link: fmt.Sprintf("mysql:root:root@tcp(%s)/%s?loc=UTC&parseTime=true&multiStatements=true", addr(), name),
+	}}})
+}
+
+// Setup drops and recreates database `name`, applies every migration, and connects to it.
+func Setup(name string) error {
+	host := addr()
 	ctx := context.Background()
-	admin, err := gdb.New(gdb.ConfigNode{Link: fmt.Sprintf("mysql:root:root@tcp(%s)/mysql", addr)})
+	admin, err := gdb.New(gdb.ConfigNode{Link: fmt.Sprintf("mysql:root:root@tcp(%s)/mysql", host)})
 	if err != nil {
 		return err
 	}
@@ -32,9 +43,7 @@ func Setup(name string) error {
 		return err
 	}
 
-	gdb.SetConfig(gdb.Config{"default": gdb.ConfigGroup{{
-		Link: fmt.Sprintf("mysql:root:root@tcp(%s)/%s?loc=UTC&parseTime=true&multiStatements=true", addr, name),
-	}}})
+	Connect(name)
 	_, self, _, _ := runtime.Caller(0)
 	migrations, err := filepath.Glob(filepath.Join(filepath.Dir(self), "../../db/migrations/*.up.sql"))
 	if err != nil || len(migrations) == 0 {

@@ -27,6 +27,9 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+// unique keeps names apart when tests repeat against the same database (-count=N).
+func unique(prefix string) string { return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano()) }
+
 func tx(t *testing.T, f func(tx gdb.TX) error) error {
 	t.Helper()
 	return g.DB().Transaction(context.Background(), func(ctx context.Context, tx gdb.TX) error { return f(tx) })
@@ -36,6 +39,7 @@ func TestTestClock(t *testing.T) {
 	ctx := context.Background()
 	realToday := time.Now().UTC().Truncate(24 * time.Hour)
 	future := realToday.AddDate(0, 2, 0)
+	g.DB().Exec(ctx, "UPDATE company_settings SET test_clock_date = NULL WHERE id = 1") // fresh clock on -count=N
 
 	t.Setenv("APP_ENV", "production")
 	if err := SetTestClock(ctx, future); !errors.Is(err, ErrClockDisabled) {
@@ -63,12 +67,13 @@ func TestTestClock(t *testing.T) {
 
 func TestNextNumberIsGaplessAcrossRollback(t *testing.T) {
 	var first, second uint64
-	_ = tx(t, func(tx gdb.TX) error { first, _ = NextNumber(tx, "invoice-test"); return nil })
+	seq := unique("seq")
+	_ = tx(t, func(tx gdb.TX) error { first, _ = NextNumber(tx, seq); return nil })
 	rollback := errors.New("rollback")
-	if err := tx(t, func(tx gdb.TX) error { NextNumber(tx, "invoice-test"); return rollback }); err != rollback {
+	if err := tx(t, func(tx gdb.TX) error { NextNumber(tx, seq); return rollback }); err != rollback {
 		t.Fatal(err)
 	}
-	_ = tx(t, func(tx gdb.TX) error { second, _ = NextNumber(tx, "invoice-test"); return nil })
+	_ = tx(t, func(tx gdb.TX) error { second, _ = NextNumber(tx, seq); return nil })
 	if first != 1 || second != 2 {
 		t.Fatalf("got %d then %d, want 1 then 2", first, second)
 	}
@@ -80,7 +85,7 @@ func TestAudit(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	r, err := g.DB().GetOne(context.Background(), "SELECT action, reason, changed_by, changes FROM audit_log WHERE table_name = 'invoices' AND record_id = 7")
+	r, err := g.DB().GetOne(context.Background(), "SELECT action, reason, changed_by, changes FROM audit_log WHERE table_name = 'invoices' AND record_id = 7 ORDER BY id DESC LIMIT 1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,9 +110,10 @@ func TestEnqueueDedupes(t *testing.T) {
 func TestTwoWorkersClaimDisjointJobs(t *testing.T) {
 	ctx := context.Background()
 	const total = 40
+	queue := unique("race")
 	_ = tx(t, func(tx gdb.TX) error {
 		for i := 0; i < total; i++ {
-			if err := Enqueue(tx, "race", "", g.Map{"n": i}, time.Now().Add(-time.Second)); err != nil {
+			if err := Enqueue(tx, queue, "", g.Map{"n": i}, time.Now().Add(-time.Second)); err != nil {
 				return err
 			}
 		}
@@ -121,7 +127,7 @@ func TestTwoWorkersClaimDisjointJobs(t *testing.T) {
 		go func(owner string) {
 			defer wg.Done()
 			for {
-				jobs, err := Claim(ctx, "race", owner, 3)
+				jobs, err := Claim(ctx, queue, owner, 3)
 				if err != nil {
 					t.Error(err)
 					return
@@ -151,15 +157,18 @@ func TestTwoWorkersClaimDisjointJobs(t *testing.T) {
 
 func TestFailRetriesThenGivesUp(t *testing.T) {
 	ctx := context.Background()
-	_ = tx(t, func(tx gdb.TX) error { return Enqueue(tx, "flaky", "", g.Map{}, time.Now().Add(-time.Second)) })
+	queue := unique("flaky")
+	_ = tx(t, func(tx gdb.TX) error { return Enqueue(tx, queue, "", g.Map{}, time.Now().Add(-time.Second)) })
 	state := func() (string, int) {
-		r, _ := g.DB().GetOne(ctx, "SELECT state, attempts FROM job_queue WHERE queue_name = 'flaky'")
+		r, _ := g.DB().GetOne(ctx, "SELECT state, attempts FROM job_queue WHERE queue_name = ?", queue)
 		return r["state"].String(), r["attempts"].Int()
 	}
-	makeDue := func() { g.DB().Exec(ctx, "UPDATE job_queue SET effective_at = NOW(3) - INTERVAL 1 SECOND WHERE queue_name = 'flaky'") }
+	makeDue := func() {
+		g.DB().Exec(ctx, "UPDATE job_queue SET effective_at = NOW(3) - INTERVAL 1 SECOND WHERE queue_name = ?", queue)
+	}
 
 	for attempt := 1; attempt <= 5; attempt++ { // max_attempts defaults to 5
-		jobs, err := Claim(ctx, "flaky", "w", 1)
+		jobs, err := Claim(ctx, queue, "w", 1)
 		if err != nil || len(jobs) != 1 || jobs[0].Attempts != attempt {
 			t.Fatalf("attempt %d: jobs=%v err=%v", attempt, jobs, err)
 		}
@@ -176,25 +185,26 @@ func TestFailRetriesThenGivesUp(t *testing.T) {
 		if s, n := state(); s != want || n != attempt {
 			t.Fatalf("after attempt %d: state=%s attempts=%d, want %s", attempt, s, n, want)
 		}
-		if jobs, _ := Claim(ctx, "flaky", "w", 1); len(jobs) != 0 {
+		if jobs, _ := Claim(ctx, queue, "w", 1); len(jobs) != 0 {
 			t.Fatalf("attempt %d: job claimable before its retry time", attempt)
 		}
 		makeDue()
 	}
-	if jobs, _ := Claim(ctx, "flaky", "w", 1); len(jobs) != 0 {
+	if jobs, _ := Claim(ctx, queue, "w", 1); len(jobs) != 0 {
 		t.Fatal("failed job was claimed again")
 	}
 }
 
 func TestExpiredLeaseIsReclaimed(t *testing.T) {
 	ctx := context.Background()
-	_ = tx(t, func(tx gdb.TX) error { return Enqueue(tx, "crash", "", g.Map{}, time.Now().Add(-time.Second)) })
-	jobs, _ := Claim(ctx, "crash", "dead-worker", 1)
+	queue := unique("crash")
+	_ = tx(t, func(tx gdb.TX) error { return Enqueue(tx, queue, "", g.Map{}, time.Now().Add(-time.Second)) })
+	jobs, _ := Claim(ctx, queue, "dead-worker", 1)
 	if len(jobs) != 1 {
 		t.Fatal("no job claimed")
 	}
 	g.DB().Exec(ctx, "UPDATE job_queue SET locked_until = NOW(3) - INTERVAL 1 SECOND WHERE id = ?", jobs[0].ID)
-	again, _ := Claim(ctx, "crash", "new-worker", 1)
+	again, _ := Claim(ctx, queue, "new-worker", 1)
 	if len(again) != 1 || again[0].ID != jobs[0].ID || again[0].Attempts != 2 {
 		t.Fatalf("reclaim got %v", again)
 	}

@@ -1,0 +1,4 @@
+# Local development only: matches docker-compose.yaml. Override in deployment.
+database:
+  default:
+    link: "mysql:root:root@tcp(127.0.0.1:3306)/bl?loc=UTC&parseTime=true"

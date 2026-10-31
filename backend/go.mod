@@ -3,6 +3,7 @@ module brightloop
 go 1.22
 
 require (
+	github.com/go-sql-driver/mysql v1.7.1
 	github.com/gogf/gf/contrib/drivers/mysql/v2 v2.6.4
 	github.com/gogf/gf/v2 v2.6.4
 	github.com/shopspring/decimal v1.6.0
@@ -15,7 +16,6 @@ require (
 	github.com/fsnotify/fsnotify v1.7.0 // indirect
 	github.com/go-logr/logr v1.2.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
-	github.com/go-sql-driver/mysql v1.7.1 // indirect
 	github.com/gorilla/websocket v1.5.0 // indirect
 	github.com/grokify/html-strip-tags-go v0.0.1 // indirect
 	github.com/magiconair/properties v1.8.6 // indirect
